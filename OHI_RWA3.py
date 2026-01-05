@@ -80,14 +80,6 @@ def get_api_key():
             st.stop()
         return api_key
 
-def process_images_in_batches(images, batch_size=4):
-    """Membagi gambar menjadi batch untuk pemrosesan yang efisien"""
-    batches = []
-    for i in range(0, len(images), batch_size):
-        batch = images[i:i + batch_size]
-        batches.append(batch)
-    return batches
-
 def extract_table_data(table):
     """Ekstrak data dari tabel"""
     table_text = []
@@ -96,20 +88,21 @@ def extract_table_data(table):
         table_text.append(" | ".join(row_data))
     return "\n".join(table_text)
 
-def extract_images_from_pptx(pptx_file, max_slides=13):
-    """Ekstrak gambar dari PowerPoint dengan optimasi untuk 13 slide"""
+def extract_images_from_pptx(pptx_file, max_images=13):
+    """Ekstrak gambar dari PowerPoint"""
     images = []
-    tables = []
     try:
         prs = Presentation(pptx_file)
-        total_slides = len(prs.slides)
-        st.info(f"📄 Memproses {min(total_slides, max_slides)} dari {total_slides} slide...")
+        img_count = 0
         
-        for slide_num, slide in enumerate(prs.slides[:max_slides], 1):
-            slide_images = []
-            slide_tables = []
-            
+        for slide_num, slide in enumerate(prs.slides, 1):
+            if img_count >= max_images:
+                break
+                
             for shape in slide.shapes:
+                if img_count >= max_images:
+                    break
+                    
                 if hasattr(shape, "image"):
                     try:
                         pil_image = Image.open(BytesIO(shape.image.blob))
@@ -121,45 +114,40 @@ def extract_images_from_pptx(pptx_file, max_slides=13):
                         elif pil_image.mode != 'RGB':
                             pil_image = pil_image.convert('RGB')
                         
-                        # Kompresi lebih agresif untuk menghemat token
-                        pil_image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                        pil_image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
                         
                         buffered = BytesIO()
-                        pil_image.save(buffered, format="JPEG", quality=70, optimize=True)
+                        pil_image.save(buffered, format="JPEG", quality=80, optimize=True)
                         img_str = base64.b64encode(buffered.getvalue()).decode()
                         
                         size_kb = len(img_str) / 1024
-                        if size_kb > 400:  # Batas lebih ketat
+                        if size_kb > 500:
                             continue
                         
-                        slide_images.append({
+                        images.append({
                             'data': img_str,
                             'slide': slide_num,
                             'type': 'image',
                             'size_kb': size_kb
                         })
+                        img_count += 1
                     except Exception as e:
                         st.warning(f"Gagal ekstrak gambar dari slide {slide_num}")
-                        
+                    
                 elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
                     try:
                         table_data = extract_table_data(shape.table)
-                        if len(table_data) > 1500:  # Batas lebih ketat
-                            table_data = table_data[:1500] + "..."
-                        slide_tables.append({
+                        if len(table_data) > 2000:
+                            table_data = table_data[:2000] + "..."
+                        images.append({
                             'data': table_data,
                             'slide': slide_num,
                             'type': 'table'
                         })
                     except:
                         pass
-            
-            # Ambil maksimal 1 gambar per slide untuk efisiensi
-            if slide_images:
-                images.append(slide_images[0])
-            images.extend(slide_tables)
         
-        return images, len([i for i in images if i.get('type') == 'image'])
+        return images, img_count
     except Exception as e:
         st.error(f"Error membaca PowerPoint: {str(e)}")
         return [], 0
@@ -185,25 +173,25 @@ def encode_image(image_file):
         st.error(f"Error encoding image: {str(e)}")
         return None
 
-def analyze_with_groq(api_key, images, tables_text, analysis_type="initial", batch_num=1):
-    """Analisis dengan Groq API - optimized untuk 13 slide"""
+def analyze_with_groq(api_key, images, tables_text, analysis_type="initial"):
+    """Analisis dengan Groq API"""
     try:
         client = Groq(api_key=api_key)
         content = []
         
         if analysis_type == "initial":
-            prompt = f"""Analisis data OHI dari gambar/tabel batch {batch_num} yang diberikan.
+            prompt = """Analisis data OHI dari gambar/tabel yang diberikan.
 
-Ekstrak dengan detail:
-1. SEMUA skor numerik dengan dimensi lengkapnya
-2. Identifikasi slide mana yang berisi data penting
-3. Catat pola dan trend yang terlihat
-4. Skor rata-rata jika ada
+Ekstrak:
+1. SEMUA skor numerik dengan dimensinya
+2. TOP 5-7 skor tertinggi (Kekuatan)
+3. BOTTOM 5-7 skor terendah (Perbaikan)
+4. Skor rata-rata dan pola
 
-Output dalam format terstruktur dan komprehensif."""
+Output dalam format terstruktur (minimal 600 kata)."""
         
-        elif analysis_type == "comprehensive":
-            prompt = """Berdasarkan SEMUA data yang telah diekstrak, buatlah laporan OHI SANGAT KOMPREHENSIF (2000-2500 kata):
+        else:
+            prompt = """Buatlah laporan OHI SANGAT KOMPREHENSIF (2000-2500 kata):
 
 **BAGIAN 1: KEKUATAN ORGANISASI** (500-600 kata)
 Untuk setiap dimensi kuat:
@@ -231,30 +219,19 @@ Minimal 12-15 rekomendasi detail:
 - Timeline & resource requirements
 - Monitoring approach
 
-Gunakan Bahasa Indonesia, profesional, detail, actionable."""
+Contoh BAIK:
+"Setiap Senin 9:00-9:15, stand-up meeting. Format: (1) Achievements minggu lalu dengan metrics (2) Top 3 priorities minggu ini (3) Blockers & support needed. Gunakan Miro board shared. Rotate facilitator. Record di Notion."
 
-        else:  # summary type
-            prompt = """Berdasarkan data yang diekstrak, buatlah ringkasan eksekutif OHI (800-1000 kata) yang mencakup:
-1. Highlights kekuatan utama
-2. Area perbaikan prioritas
-3. Rekomendasi kunci untuk leadership
-4. Next steps yang actionable"""
+Gunakan Bahasa Indonesia, profesional, detail, actionable."""
 
         content.append({"type": "text", "text": prompt})
         
         if tables_text:
-            if len(tables_text) > 2500:  # Lebih konservatif
-                tables_text = tables_text[:2500] + "..."
+            if len(tables_text) > 3000:
+                tables_text = tables_text[:3000] + "..."
             content.append({"type": "text", "text": f"\n=== DATA TABEL ===\n{tables_text}\n==="})
         
-        # Strategi berbeda untuk setiap tipe analisis
-        if analysis_type == "initial":
-            max_imgs = 4  # Lebih banyak untuk ekstraksi data
-        elif analysis_type == "comprehensive":
-            max_imgs = 2  # Lebih sedikit untuk laporan final
-        else:
-            max_imgs = 3
-            
+        max_imgs = 3 if analysis_type == "initial" else 5
         for idx, img in enumerate(images[:max_imgs]):
             if isinstance(img, dict) and img.get('type') == 'image':
                 content.append({
@@ -267,7 +244,6 @@ Gunakan Bahasa Indonesia, profesional, detail, actionable."""
                     "image_url": {"url": f"data:image/jpeg;base64,{img}"}
                 })
         
-        # Token management yang lebih konservatif
         max_tokens = 4096 if analysis_type == "initial" else 8192
         
         response = client.chat.completions.create(
@@ -307,11 +283,7 @@ if upload_type == "PowerPoint (.pptx)":
     pptx_file = st.file_uploader("Upload PowerPoint", type=["pptx"])
     
     if pptx_file:
-        # Validasi ukuran file (maksimal 100MB untuk 13 slide)
-        if pptx_file.size > 100 * 1024 * 1024:
-            st.error("❌ File terlalu besar! Maksimal 100MB untuk 13 slide")
-            st.stop()
-        st.success(f"✅ File: {pptx_file.name} ({pptx_file.size / (1024*1024):.1f}MB)")
+        st.success(f"✅ File: {pptx_file.name}")
         
         if st.button("🚀 Analisis & Generate Rapport", type="primary", use_container_width=True):
             with st.spinner("Mengekstrak konten..."):
@@ -321,53 +293,32 @@ if upload_type == "PowerPoint (.pptx)":
                 if extracted:
                     images = [i for i in extracted if i.get('type') == 'image']
                     tables = [i for i in extracted if i.get('type') == 'table']
-                    st.success(f"✅ {len(images)} gambar, {len(tables)} tabel dari {min(13, len(extracted))} slide")
+                    st.success(f"✅ {len(images)} gambar, {len(tables)} tabel")
                     
-                    tables_text = "\n\n".join([t['data'] for t in tables])[:4000]
+                    tables_text = "\n\n".join([t['data'] for t in tables])[:5000]
                     
-                    # Proses dalam batch untuk menangani banyak gambar
-                    image_batches = process_images_in_batches(images, batch_size=4)
-                    all_extractions = []
+                    st.info("📊 Tahap 1: Ekstraksi data...")
+                    initial = analyze_with_groq(api_key, images[:5], tables_text, "initial")
                     
-                    for batch_num, batch in enumerate(image_batches, 1):
-                        st.info(f"📊 Tahap {batch_num}: Ekstraksi data batch {batch_num}/{len(image_batches)}...")
-                        batch_extraction = analyze_with_groq(
-                            api_key, batch, tables_text if batch_num == 1 else "", 
-                            "initial", batch_num
-                        )
-                        if batch_extraction:
-                            all_extractions.append(batch_extraction)
+                    if initial:
+                    with st.expander("📋 Data Terdeteksi", expanded=True):
+                    st.markdown(initial)
                     
-                    if all_extractions:
-                        # Gabungkan semua ekstraksi
-                        combined_data = "\n\n".join(all_extractions)
-                        
-                        with st.expander("📋 Data Terdeteksi dari Semua Slide", expanded=True):
-                            st.markdown(combined_data)
-                        
-                        st.info("📝 Tahap Final: Menyusun rapport komprehensif...")
-                        # Gunakan data gabungan untuk laporan final
-                        final = analyze_with_groq(api_key, images[:2], combined_data[:3000], "comprehensive")
-                        
-                        if final:
-                            st.markdown('<div class="section-header">📄 Rapport Lengkap</div>', unsafe_allow_html=True)
-                            st.markdown(final)
-                            
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.download_button("⬇️ TXT", final, "OHI_Rapport.txt", "text/plain", use_container_width=True)
-                            with col2:
-                                st.download_button("⬇️ MD", final, "OHI_Rapport.md", "text/markdown", use_container_width=True)
-                            with col3:
-                                full = f"# DATA EKSTRAKSI\n\n{combined_data}\n\n---\n\n# RAPPORT\n\n{final}"
-                                st.download_button("⬇️ Lengkap", full, "OHI_Complete.md", use_container_width=True)
-                        else:
-                            # Fallback: buat ringkasan eksekutif
-                            st.info("📝 Membuat ringkasan eksekutif...")
-                            summary = analyze_with_groq(api_key, images[:3], combined_data[:2000], "summary")
-                            if summary:
-                                st.markdown(summary)
-                                st.download_button("⬇️ Ringkasan", summary, "OHI_Summary.txt", use_container_width=True)
+                    st.info("📝 Tahap 2: Menyusun rapport komprehensif...")
+                    final = analyze_with_groq(api_key, images[:3], "", "final")
+                    
+                    if final:
+                    st.markdown('<div class="section-header">📄 Rapport Lengkap</div>', unsafe_allow_html=True)
+                    st.markdown(final)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                    st.download_button("⬇️ TXT", final, "OHI_Rapport.txt", "text/plain", use_container_width=True)
+                    with col2:
+                    st.download_button("⬇️ MD", final, "OHI_Rapport.md", "text/markdown", use_container_width=True)
+                    with col3:
+                    full = f"# DATA EKSTRAKSI\n\n{initial}\n\n---\n\n# RAPPORT\n\n{final}"
+                    st.download_button("⬇️ Lengkap", full, "OHI_Complete.md", use_container_width=True)
 
 else:
     files = st.file_uploader("Upload gambar", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
@@ -384,20 +335,20 @@ else:
                     initial = analyze_with_groq(api_key, encoded, "", "initial")
                     
                     if initial:
-                        with st.expander("📋 Data", expanded=True):
-                            st.markdown(initial)
-                        
-                        st.info("📝 Menyusun rapport...")
-                        final = analyze_with_groq(api_key, encoded, "", "comprehensive")
-                        
-                        if final:
-                            st.markdown(final)
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.download_button("⬇️ TXT", final, "OHI_Rapport.txt", use_container_width=True)
-                            with col2:
-                                st.download_button("⬇️ MD", final, "OHI_Rapport.md", use_container_width=True)
+                    with st.expander("📋 Data", expanded=True):
+                    st.markdown(initial)
+                    
+                    st.info("📝 Menyusun rapport...")
+                    final = analyze_with_groq(api_key, encoded, "", "final")
+                    
+                    if final:
+                    st.markdown(final)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                    st.download_button("⬇️ TXT", final, "OHI_Rapport.txt", use_container_width=True)
+                    with col2:
+                    st.download_button("⬇️ MD", final, "OHI_Rapport.md", use_container_width=True)
 
 st.markdown("---")
 st.markdown("""
