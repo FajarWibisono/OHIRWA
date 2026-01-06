@@ -118,7 +118,7 @@ def analyze_with_groq(api_key, images, tables_text, analysis_type="initial"):
         if analysis_type == "initial":
             prompt = "Analisis data OHI dari gambar/tabel. Ekstrak: 1) Skor numerik dengan dimensi 2) TOP 5 skor tertinggi 3) BOTTOM 5 skor terendah 4) Skor rata-rata. Output 400-500 kata."
         else:
-            prompt = "Buatlah laporan OHI komprehensif (800-1000 kata): **KEKUATAN ORGANISASI** (250 kata) - Untuk dimensi dengan skor tinggi: Skor & alasan kekuatan, Dampak positif, Cara mempertahankan. **AREA PERBAIKAN** (350 kata) - Untuk dimensi dengan skor rendah: Root cause analysis, Rekomendasi spesifik, Quick wins, Medium-term. **REKOMENDASI LEADERSHIP** (300 kata) - 6-8 rekomendasi praktis: Leadership behaviors, Communication strategy, Timeline. Gunakan Bahasa Indonesia, profesional, actionable."
+            prompt = "Buatlah laporan OHI komprehensif (800-1000 kata): **KEKUATAN ORGANISASI** (250 kata) - Untuk dimensi dengan skor tinggi: Skor & alasan kekuatan, Dampak positif, Cara mempertahankan. **AREA PERBAIKAN** (400 kata) - Untuk dimensi dengan skor rendah: Root cause analysis, Rekomendasi spesifik, Quick wins, Medium-term. **REKOMENDASI LEADERSHIP** (300 kata) - 6-8 rekomendasi praktis: Leadership behaviors, Communication strategy, Timeline. Gunakan Bahasa Indonesia, profesional, actionable."
 
         content.append({"type": "text", "text": prompt})
 
@@ -245,13 +245,7 @@ else:
                                         st.download_button("⬇️ MD", final, "OHI_Rapport.md", use_container_width=True)
 
 st.markdown("---")
-st.markdown('<div style="text-align: center; color: #64748B; padding: 1rem;"><p><strong>OHI Rapport Writer Assistance</strong></p><p>Powered by McKinsey OHI Framework & Groq AI</p></div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align: center; color: #64748B; padding: 1rem;"><p><strong>OHI Rapport Writer Assistance</strong></p><p>Powered by McKinsey OHI Framework & LLM-OS</p></div>', unsafe_allow_html=True)
 """
 
-# Simpan file
-with open('OHI_RWA3.py', 'w', encoding='utf-8') as f:
-    f.write(code)
 
-print("✅ File OHI_RWA3.py berhasil dibuat dengan indentasi yang BENAR!")
-print("✅ Tidak ada error indentasi lagi!")
-print("✅ Siap digunakan!")
